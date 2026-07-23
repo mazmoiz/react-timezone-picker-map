@@ -35,20 +35,8 @@ export interface TimeZonePickerMapProps {
   backgroundColor?: string;
   /** Color of the vertical UTC-offset lines. */
   timeZoneLineColor?: string;
-  /** Color of the UTC offset labels. */
-  utcLabelColor?: string;
-
-  /** Whether the vertical UTC-offset lines are rendered. Default `true`. */
-  showTimeZoneLines?: boolean;
-  /** Whether the UTC offset labels are rendered. Default `true`. */
-  showUtcLabels?: boolean;
-  /**
-   * Whether to render lines/labels for canonical offsets with no matching
-   * `enabledTimeZones`. Default `false` — such lines are hidden by default so
-   * restricting `enabledTimeZones` also visually trims the grid down to what's
-   * actually selectable. Set to `true` to always render the full ~37-line grid.
-   */
-  showEmptyTimeZoneLines?: boolean;
+  /** Color of a UTC-offset line while hovered or keyboard-focused. */
+  timeZoneLineHighlightColor?: string;
 
   /** Subset of IANA zones the consumer wants selectable. Default: all zones. */
   enabledTimeZones?: readonly IanaTimeZoneName[];
