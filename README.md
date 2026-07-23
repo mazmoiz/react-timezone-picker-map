@@ -29,7 +29,7 @@ searching through a long list of city names.
 
 ## Demo
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/vitejs-vite-rc9m8ykm?embed=1&file=src%2FApp.tsx)
+[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/vitejs-vite-rc9m8ykm?file=src%2FApp.tsx&showSidebar=0)
 
 ## Install
 

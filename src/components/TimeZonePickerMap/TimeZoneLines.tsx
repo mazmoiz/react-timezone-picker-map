@@ -10,7 +10,19 @@ import {
   offsetMinutesToX,
   resolveNearestOffset,
 } from '../../utils/geometry';
-import { findNearestZone } from '../../utils/nearestZone';
+import { ZONE_COORDINATES } from '../../data/zoneCoordinates';
+import { findNearestZone, haversineDistanceKm } from '../../utils/nearestZone';
+
+/**
+ * When only one offset line is visible (a restricted `enabledTimeZones` collapsing to
+ * a single bucket), MAX_LINE_SNAP_DISTANCE can't be used to gate acceptance — see below.
+ * Instead we require the pointer's real geographic position to be within this distance
+ * of the resolved zone's own reference coordinate, so hovering a completely unrelated
+ * continent doesn't stay "stuck" on the only visible zone. Sized generously above the
+ * largest realistic single-zone country span (e.g. Argentina, Western Australia) while
+ * still excluding other continents.
+ */
+const MAX_ZONE_HOVER_DISTANCE_KM = 3000;
 
 export interface TimeZoneLinesProps {
   lineColor: string;
@@ -68,14 +80,30 @@ export function TimeZoneLines({
     ) => {
       const { x, y } = clientPointToViewBoxPoint(clientX, clientY, rect);
       const nearestOffset = resolveNearestOffset(x, visibleOffsets);
-      // A sparse, widely-spaced set of visible lines (e.g. a restricted enabledTimeZones)
-      // would otherwise make every point on the map resolve to whichever line happens to
-      // be nearest, however far away — cap it so pointer interaction only ever resolves
-      // near an actual line.
-      if (Math.abs(offsetMinutesToX(nearestOffset) - x) > MAX_LINE_SNAP_DISTANCE) return null;
       const bucket = bucketsByOffset.get(nearestOffset);
       if (!bucket) return null;
-      const nearestTimeZone = findNearestZone(bucket.timeZones, invertPoint(x, y));
+      const point = invertPoint(x, y);
+      const nearestTimeZone = findNearestZone(bucket.timeZones, point);
+
+      // A sparse, widely-spaced set of visible lines (e.g. a restricted
+      // enabledTimeZones) would otherwise make every point on the map resolve to
+      // whichever line happens to be nearest, however far away — require the pointer
+      // be near an actual line before accepting it.
+      const nearLine = Math.abs(offsetMinutesToX(nearestOffset) - x) <= MAX_LINE_SNAP_DISTANCE;
+
+      if (!nearLine) {
+        if (visibleOffsets.length > 1) return null;
+        // With only one line visible there's no other candidate offset to
+        // disambiguate from, so also accept real geographic proximity to the
+        // resolved zone — a real zone's landmass (e.g. Argentina under UTC-3)
+        // commonly sits much further from its own line than the cap above allows.
+        const nearZone =
+          nearestTimeZone != null &&
+          haversineDistanceKm(point, ZONE_COORDINATES[nearestTimeZone]) <=
+            MAX_ZONE_HOVER_DISTANCE_KM;
+        if (!nearZone) return null;
+      }
+
       return { ...bucket, nearestTimeZone };
     },
     [bucketsByOffset, visibleOffsets],

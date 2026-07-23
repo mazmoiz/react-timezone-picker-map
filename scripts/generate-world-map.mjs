@@ -200,9 +200,11 @@ function resolveCoordinate(zone, depth = 0) {
 }
 
 const zoneCoordinates = {};
+const canonicalZones = [];
 for (const zone of zones) {
   const coordinate = resolveCoordinate(zone);
   if (coordinate) zoneCoordinates[zone] = coordinate;
+  if (zone in canonicalCoordinates) canonicalZones.push(zone);
 }
 
 const unresolvedZones = zones.filter((zone) => !(zone in zoneCoordinates));
@@ -229,6 +231,15 @@ writeFileSync(
       zoneCoordinates,
     )
       .map(([zone, { lat, lon }]) => `  '${zone}': { lat: ${lat}, lon: ${lon} },`)
-      .join('\n')}\n};\n`,
+      .join('\n')}\n};\n\n` +
+    `// Zones with their own direct zone1970.tab entry (i.e. not a pure alias of\n` +
+    `// another zone via a tzdata.zi Link line). Aliases inherit their target's exact\n` +
+    `// coordinate (see ZONE_COORDINATES above), so when several zones tie on\n` +
+    `// haversine distance, at most one of them can appear here — used by\n` +
+    `// src/utils/nearestZone.ts to prefer the real canonical zone (e.g. Europe/London)\n` +
+    `// over its aliases (e.g. Europe/Guernsey) on an exact-distance tie.\n\n` +
+    `export const CANONICAL_TIME_ZONES: readonly string[] = [\n${canonicalZones
+      .map((zone) => `  '${zone}',`)
+      .join('\n')}\n];\n`,
 );
 console.log(`Wrote src/data/zoneCoordinates.ts`);

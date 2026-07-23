@@ -31,4 +31,23 @@ describe('findNearestZone', () => {
     expect(findNearestZone(['UTC'], { lat: 0, lon: 0 })).toBeNull();
     expect(findNearestZone([], { lat: 0, lon: 0 })).toBeNull();
   });
+
+  it('prefers the canonical zone over its coordinate-sharing aliases on an exact tie', () => {
+    // Europe/Guernsey, Europe/Isle_of_Man, and Europe/Jersey are pure IANA Link
+    // aliases of Europe/London and inherit its exact coordinate — alphabetically
+    // 'Guernsey' sorts before 'London', so a naive first-wins tie-break would always
+    // pick an alias over the real canonical city.
+    const zones = [
+      'Europe/Guernsey',
+      'Europe/Isle_of_Man',
+      'Europe/Jersey',
+      'Europe/London',
+    ] as const;
+    expect(findNearestZone(zones, { lat: 51.5, lon: -0.1 })).toBe('Europe/London');
+    // Order-independence: still correct even if the canonical zone is encountered
+    // first — proves this is a principled tie-break, not a coincidence of array order.
+    expect(findNearestZone([...zones].reverse(), { lat: 51.5, lon: -0.1 })).toBe(
+      'Europe/London',
+    );
+  });
 });
