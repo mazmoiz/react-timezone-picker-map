@@ -27,6 +27,17 @@ const PX_PER_HOUR = MAP_WIDTH / 24;
 const CORE_MIN_MINUTES = -720;
 const CORE_MAX_MINUTES = 720;
 
+/**
+ * Maximum pointer distance (viewBox px) from the nearest candidate line before pointer
+ * interaction resolves to "nothing" instead of snapping regardless of distance. The
+ * largest gap between any two adjacent offsets in the full canonical grid is 1 hour, so
+ * this never affects the default full-grid experience (every point in it is within half
+ * that gap of some line) — it only matters when `enabledTimeZones` restricts the visible
+ * lines to a sparse, widely-spaced few, where "always snap to nearest" would otherwise
+ * make the entire map resolve to whichever one happens to be closest, however far away.
+ */
+export const MAX_LINE_SNAP_DISTANCE = PX_PER_HOUR / 2;
+
 const observedMinMinutes = Math.min(...UTC_OFFSET_MINUTES);
 const observedMaxMinutes = Math.max(...UTC_OFFSET_MINUTES);
 
@@ -58,9 +69,10 @@ export function offsetMinutesToX(offsetMinutes: number): number {
  * with rendered pixel size instead of requiring a precise hit on a fixed band.
  *
  * `candidateOffsets` defaults to every canonical offset (today's behavior), but
- * callers that hide some lines (e.g. `showEmptyTimeZoneLines={false}`) should pass
- * only the currently-visible offsets, so a click near a hidden line snaps to the
- * nearest *visible* one instead of resolving to a bucket with nothing rendered.
+ * callers that hide some lines (offsets with no matching enabled zone are always
+ * hidden) should pass only the currently-visible offsets, so a click near a hidden
+ * line snaps to the nearest *visible* one instead of resolving to a bucket with
+ * nothing rendered.
  */
 export function resolveNearestOffset(
   x: number,

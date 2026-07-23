@@ -1,6 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UTC_OFFSET_MINUTES } from '../../data/utcOffsets';
 import {
   DEGREES_PER_PIXEL,
   EQUATOR_Y,
@@ -118,6 +117,50 @@ describe('TimeZonePickerMap', () => {
     expect(onTimeZoneHover).toHaveBeenLastCalledWith(null);
   });
 
+  it('visually highlights the hovered line and reverts it on pointer leave', () => {
+    const { container } = render(<TimeZonePickerMap enabledTimeZones={TEST_ZONES} />);
+    const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+    const hoveredLine = container.querySelector(
+      `line[x1="${offsetMinutesToX(330)}"]`,
+    ) as SVGLineElement;
+    const otherLine = container.querySelector(
+      `line[x1="${offsetMinutesToX(-300)}"]`,
+    ) as SVGLineElement;
+
+    expect(hoveredLine.getAttribute('stroke-width')).toBe('1');
+
+    fireEvent(
+      overlay,
+      new MouseEvent('pointermove', { clientX: offsetMinutesToX(330), bubbles: true }),
+    );
+    expect(hoveredLine.getAttribute('stroke-width')).toBe('2');
+    expect(hoveredLine.getAttribute('stroke')).not.toBe(otherLine.getAttribute('stroke'));
+    expect(otherLine.getAttribute('stroke-width')).toBe('1');
+
+    fireEvent(
+      overlay,
+      new MouseEvent('pointerout', {
+        bubbles: true,
+        relatedTarget: document.body,
+      } as MouseEventInit),
+    );
+    expect(hoveredLine.getAttribute('stroke-width')).toBe('1');
+  });
+
+  it('visually highlights a line on keyboard focus and reverts it on blur', () => {
+    const { container } = render(<TimeZonePickerMap enabledTimeZones={TEST_ZONES} />);
+    const button = screen.getByRole('button', { name: /UTC\+5:30/ });
+    const line = container.querySelector(
+      `line[x1="${offsetMinutesToX(330)}"]`,
+    ) as SVGLineElement;
+
+    fireEvent.focus(button);
+    expect(line.getAttribute('stroke-width')).toBe('2');
+
+    fireEvent.blur(button);
+    expect(line.getAttribute('stroke-width')).toBe('1');
+  });
+
   it('activates the matching line via keyboard (Enter) on its focusable target, with no nearestTimeZone', () => {
     const onTimeZoneSelect = vi.fn();
     render(<TimeZonePickerMap enabledTimeZones={TEST_ZONES} onTimeZoneSelect={onTimeZoneSelect} />);
@@ -164,24 +207,16 @@ describe('TimeZonePickerMap', () => {
     );
   });
 
-  it('omits the interactive lines subtree entirely when showTimeZoneLines is false', () => {
-    const { container } = render(<TimeZonePickerMap showTimeZoneLines={false} />);
-    expect(container.querySelector('[data-testid="tz-lines-overlay"]')).toBeNull();
-    expect(container.querySelectorAll('svg line').length).toBe(0);
-    expect(screen.queryAllByRole('button').length).toBe(0);
-  });
-
-  it('omits UTC labels when showUtcLabels is false', () => {
-    const { container } = render(<TimeZonePickerMap showUtcLabels={false} />);
+  it('never renders UTC labels (feature currently hidden)', () => {
+    const { container } = render(<TimeZonePickerMap />);
     expect(container.querySelectorAll('svg text').length).toBe(0);
   });
 
-  it('hides lines/labels/buttons for offsets with no matching enabled zone by default', () => {
+  it('hides lines/buttons for offsets with no matching enabled zone', () => {
     const { container } = render(<TimeZonePickerMap enabledTimeZones={TEST_ZONES} />);
     // Only 3 of the ~37 canonical offsets have a matching zone in TEST_ZONES.
     expect(container.querySelectorAll('svg line').length).toBe(3);
     expect(screen.queryAllByRole('button').length).toBe(3);
-    expect(container.querySelectorAll('svg text').length).toBe(3 * 2); // top + bottom row
   });
 
   it('resolves a click near a hidden line to the nearest visible one instead of nothing', () => {
@@ -198,13 +233,36 @@ describe('TimeZonePickerMap', () => {
     );
   });
 
-  it('renders the full grid regardless of enabledTimeZones when showEmptyTimeZoneLines is true', () => {
+  it('clears hover once the pointer moves far from every visible line (sparse enabledTimeZones)', () => {
+    // With only a few widely-spaced zones enabled, "nearest line wins" must not degrade
+    // into "whichever line happens to be closest, however far away" — otherwise the
+    // reported value would never change as the pointer moves through the large gaps
+    // between the few visible lines.
+    const SPARSE_ZONES = ['America/Los_Angeles', 'Asia/Kolkata'] as const;
+    const onTimeZoneHover = vi.fn();
     const { container } = render(
-      <TimeZonePickerMap enabledTimeZones={TEST_ZONES} showEmptyTimeZoneLines />,
+      <TimeZonePickerMap enabledTimeZones={SPARSE_ZONES} onTimeZoneHover={onTimeZoneHover} />,
     );
-    expect(container.querySelectorAll('svg line').length).toBe(UTC_OFFSET_MINUTES.length);
-    expect(screen.queryAllByRole('button').length).toBe(UTC_OFFSET_MINUTES.length);
-    expect(container.querySelectorAll('svg text').length).toBe(UTC_OFFSET_MINUTES.length * 2);
+    const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+    fireEvent(
+      overlay,
+      new MouseEvent('pointermove', { clientX: offsetMinutesToX(-480), bubbles: true }),
+    );
+    expect(onTimeZoneHover).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offsetMinutes: -480, nearestTimeZone: 'America/Los_Angeles' }),
+    );
+
+    // Well past Los Angeles's line, still far short of Kolkata's — should resolve to
+    // nothing rather than sticking to whichever of the two happens to be closer.
+    fireEvent(
+      overlay,
+      new MouseEvent('pointermove', {
+        clientX: offsetMinutesToX(-480) + 200,
+        bubbles: true,
+      }),
+    );
+    expect(onTimeZoneHover).toHaveBeenLastCalledWith(null);
   });
 
   it('applies custom continentColor and backgroundColor', () => {

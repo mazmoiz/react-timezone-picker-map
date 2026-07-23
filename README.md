@@ -4,10 +4,12 @@ An interactive React world map for picking a time zone. Click or tap anywhere on
 the map and get back the real IANA time zone at that location — no dropdowns, no
 searching through a long list of city names.
 
+![Screenshot of the TimeZonePickerMap component](dev/images/component-screenshot.png)
+
 ## Features
 
 - **Click-to-select world map** — pick a time zone visually, by clicking where a
-  location actually is on the globe.
+  location actually is on the map.
 - **Complete time zone coverage** — every real-world UTC offset is represented,
   including half-hour and 45-minute offsets (India, Nepal, Chatham Islands, etc.),
   not just whole hours.
@@ -16,14 +18,18 @@ searching through a long list of city names.
   cursor, not just a generic list.
 - **Restrict selectable zones** — limit the picker to a specific subset of time
   zones (e.g. only the ones your app supports) via a simple prop.
-- **Fully customizable look** — colors for the continents, background, offset
-  lines, and labels are all configurable, and lines/labels can be hidden entirely.
+- **Fully customizable look** — colors for the continents, background, and
+  offset lines (including their hover/focus highlight) are all configurable.
 - **Responsive by design** — resizes freely with its container without ever
   stretching or distorting the map.
 - **Geographically accurate** — built from real world map data, so the time zone
   lines always line up correctly with the landmasses beneath them.
 - **TypeScript-first** — full type definitions included, ESM and CJS builds, no
   runtime dependencies beyond `react`/`react-dom`.
+
+## Demo
+
+[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/edit/vitejs-vite-rc9m8ykm?embed=1&file=src%2FApp.tsx)
 
 ## Install
 
@@ -60,30 +66,24 @@ function App() {
 />
 ```
 
-By default, a line/label is only rendered if at least one enabled zone matches its
-offset — so the grid visually trims down to what's actually selectable. Pass
-`showEmptyTimeZoneLines` to always render the full ~37-line grid regardless of
-`enabledTimeZones` (a line with no matching zone then just returns an empty
-`timeZones` array when picked).
+A line is only rendered if at least one enabled zone matches its offset — so the
+grid visually trims down to what's actually selectable.
 
 ## Props
 
-| Prop                     | Type                                             | Default        | Description                                                                     |
-| ------------------------ | ------------------------------------------------ | -------------- | ------------------------------------------------------------------------------- |
-| `width`                  | `string \| number`                               | `'100%'`       | Width of the map (applied to the root `<svg>`).                                 |
-| `height`                 | `string \| number`                               | `'100%'`       | Height of the map (applied to the root `<svg>`).                                |
-| `className`              | `string`                                         | —              | Applied to the root `<svg>`.                                                    |
-| `style`                  | `CSSProperties`                                  | —              | Applied to the root `<svg>`.                                                    |
-| `continentColor`         | `string`                                         | `'#55717D'`    | Fill color for the continents.                                                  |
-| `backgroundColor`        | `string`                                         | `'#fff'`       | Fill color for the water/background.                                            |
-| `timeZoneLineColor`      | `string`                                         | `'#9AA5B1'`    | Color of the vertical UTC-offset lines.                                         |
-| `utcLabelColor`          | `string`                                         | `'#37474F'`    | Color of the UTC offset labels.                                                 |
-| `showTimeZoneLines`      | `boolean`                                        | `true`         | Whether the vertical offset lines (and their interactivity) render at all.      |
-| `showUtcLabels`          | `boolean`                                        | `true`         | Whether the UTC offset labels render.                                           |
-| `showEmptyTimeZoneLines` | `boolean`                                        | `false`        | Whether to render lines/labels for offsets with no matching `enabledTimeZones`. |
-| `enabledTimeZones`       | `readonly IanaTimeZoneName[]`                    | all IANA zones | Subset of zones the consumer wants selectable.                                  |
-| `onTimeZoneSelect`       | `(selection: TimeZoneSelection) => void`         | —              | Fired on click/tap or Enter/Space on a focused line.                            |
-| `onTimeZoneHover`        | `(selection: TimeZoneSelection \| null) => void` | —              | Fired on hover/focus (`selection`) and on leave/blur (`null`).                  |
+| Prop                          | Type                                             | Default        | Description                                                              |
+| ----------------------------- | ------------------------------------------------ | -------------- | ------------------------------------------------------------------------ |
+| `width`                       | `string \| number`                               | `'100%'`       | Width of the map (applied to the root `<svg>`).                          |
+| `height`                      | `string \| number`                               | `'100%'`       | Height of the map (applied to the root `<svg>`).                        |
+| `className`                   | `string`                                         | —              | Applied to the root `<svg>`.                                             |
+| `style`                       | `CSSProperties`                                  | —              | Applied to the root `<svg>`.                                             |
+| `continentColor`              | `string`                                         | `'#55717D'`    | Fill color for the continents.                                           |
+| `backgroundColor`             | `string`                                         | `'#fff'`       | Fill color for the water/background.                                     |
+| `timeZoneLineColor`           | `string`                                         | `'#9AA5B1'`    | Color of the vertical UTC-offset lines.                                  |
+| `timeZoneLineHighlightColor`  | `string`                                         | `'#2563EB'`    | Color of a UTC-offset line while hovered or keyboard-focused.            |
+| `enabledTimeZones`            | `readonly IanaTimeZoneName[]`                    | all IANA zones | Subset of zones the consumer wants selectable.                           |
+| `onTimeZoneSelect`            | `(selection: TimeZoneSelection) => void`         | —              | Fired on click/tap or Enter/Space on a focused line.                     |
+| `onTimeZoneHover`             | `(selection: TimeZoneSelection \| null) => void` | —              | Fired on hover/focus (`selection`) and on leave/blur (`null`).           |
 
 `TimeZoneSelection` shape:
 

@@ -1,8 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 import type { TimeZoneSelection } from '../../types';
 import {
   MAP_HEIGHT,
+  MAX_LINE_SNAP_DISTANCE,
   TOTAL_WIDTH,
   clientPointToViewBoxPoint,
   invertPoint,
@@ -13,12 +14,14 @@ import { findNearestZone } from '../../utils/nearestZone';
 
 export interface TimeZoneLinesProps {
   lineColor: string;
+  highlightColor: string;
   buckets: readonly TimeZoneSelection[];
   onSelect?: (selection: TimeZoneSelection) => void;
   onHover?: (selection: TimeZoneSelection | null) => void;
 }
 
 const FOCUS_TARGET_WIDTH = 8;
+const HOVER_STROKE_WIDTH = 2;
 
 /**
  * Renders the vertical UTC-offset lines plus two decoupled interaction layers:
@@ -31,15 +34,26 @@ const FOCUS_TARGET_WIDTH = 8;
  *   per line) since keyboard users tab between distinct stops and don't need
  *   touch-sized targets.
  */
-export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZoneLinesProps) {
+export function TimeZoneLines({
+  lineColor,
+  highlightColor,
+  buckets,
+  onSelect,
+  onHover,
+}: TimeZoneLinesProps) {
+  // Tracked locally (not lifted, matching how selection/hover state already works in this
+  // tree) purely to drive the visual highlight — `onHover` still carries the same payload
+  // out to the consumer as before.
+  const [hoveredOffset, setHoveredOffset] = useState<number | null>(null);
+
   const bucketsByOffset = useMemo(
     () => new Map(buckets.map((bucket) => [bucket.offsetMinutes, bucket])),
     [buckets],
   );
 
-  // Only ever snap to a currently-rendered line — if some offsets are hidden (see
-  // `showEmptyTimeZoneLines`), a click near one of those should resolve to the
-  // nearest *visible* line instead of silently doing nothing.
+  // Only ever snap to a currently-rendered line — offsets with no matching enabled
+  // zone are hidden, so a click near one of those should resolve to the nearest
+  // *visible* line instead of silently doing nothing.
   const visibleOffsets = useMemo(() => buckets.map((bucket) => bucket.offsetMinutes), [buckets]);
 
   // Resolves the bucket under the pointer (x/offset-based, as before) and, since a
@@ -54,6 +68,11 @@ export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZon
     ) => {
       const { x, y } = clientPointToViewBoxPoint(clientX, clientY, rect);
       const nearestOffset = resolveNearestOffset(x, visibleOffsets);
+      // A sparse, widely-spaced set of visible lines (e.g. a restricted enabledTimeZones)
+      // would otherwise make every point on the map resolve to whichever line happens to
+      // be nearest, however far away — cap it so pointer interaction only ever resolves
+      // near an actual line.
+      if (Math.abs(offsetMinutesToX(nearestOffset) - x) > MAX_LINE_SNAP_DISTANCE) return null;
       const bucket = bucketsByOffset.get(nearestOffset);
       if (!bucket) return null;
       const nearestTimeZone = findNearestZone(bucket.timeZones, invertPoint(x, y));
@@ -81,12 +100,14 @@ export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZon
         event.clientY,
         event.currentTarget.getBoundingClientRect(),
       );
+      setHoveredOffset(bucket?.offsetMinutes ?? null);
       onHover?.(bucket);
     },
     [onHover, resolveBucketFromClientPoint],
   );
 
   const handleOverlayPointerLeave = useCallback(() => {
+    setHoveredOffset(null);
     onHover?.(null);
   }, [onHover]);
 
@@ -104,6 +125,7 @@ export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZon
     <g>
       {buckets.map((bucket) => {
         const x = offsetMinutesToX(bucket.offsetMinutes);
+        const isHovered = bucket.offsetMinutes === hoveredOffset;
         return (
           <line
             key={bucket.offsetMinutes}
@@ -111,8 +133,8 @@ export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZon
             x2={x}
             y1={0}
             y2={MAP_HEIGHT}
-            stroke={lineColor}
-            strokeWidth={1}
+            stroke={isHovered ? highlightColor : lineColor}
+            strokeWidth={isHovered ? HOVER_STROKE_WIDTH : 1}
             pointerEvents="none"
             aria-hidden="true"
           />
@@ -143,8 +165,14 @@ export function TimeZoneLines({ lineColor, buckets, onSelect, onHover }: TimeZon
             tabIndex={0}
             aria-label={`${bucket.label}, ${zoneCount} time zone${zoneCount === 1 ? '' : 's'}`}
             onKeyDown={(event) => handleLineKeyDown(event, bucket)}
-            onFocus={() => onHover?.(bucket)}
-            onBlur={() => onHover?.(null)}
+            onFocus={() => {
+              setHoveredOffset(bucket.offsetMinutes);
+              onHover?.(bucket);
+            }}
+            onBlur={() => {
+              setHoveredOffset(null);
+              onHover?.(null);
+            }}
           >
             <rect
               x={x - FOCUS_TARGET_WIDTH / 2}
