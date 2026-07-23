@@ -207,6 +207,45 @@ describe('TimeZonePickerMap', () => {
     );
   });
 
+  it('selects on the rendered line itself when only one offset is visible, even far from any zone coordinate', () => {
+    // Only one offset is visible here (both zones share UTC-3), so there's no other
+    // candidate offset to disambiguate against — clicking the line at a latitude far
+    // from either zone's reference coordinate (e.g. the equator, vs. Buenos Aires at
+    // -34.6 and Cayenne at 4.93) must still resolve, since the line itself is the
+    // primary rendered hit target.
+    const zones = ['America/Buenos_Aires', 'America/Cayenne'] as const;
+    const onTimeZoneSelect = vi.fn();
+    const { container } = render(
+      <TimeZonePickerMap enabledTimeZones={zones} onTimeZoneSelect={onTimeZoneSelect} />,
+    );
+    const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+    fireEvent.click(overlay, { clientX: offsetMinutesToX(-180), clientY: EQUATOR_Y });
+    expect(onTimeZoneSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        offsetMinutes: -180,
+        timeZones: expect.arrayContaining(['America/Buenos_Aires', 'America/Cayenne']),
+      }),
+    );
+  });
+
+  it('does not select when hovering an unrelated continent with only one offset visible', () => {
+    // Guards against the single-line case swinging the other way: with nothing to
+    // disambiguate against, every point on the map must not collapse onto the one
+    // visible zone regardless of distance — a click on a wholly unrelated continent
+    // (e.g. Africa, ~7,000km from South America) should resolve to nothing.
+    const zones = ['America/Buenos_Aires', 'America/Cayenne'] as const;
+    const onTimeZoneSelect = vi.fn();
+    const { container } = render(
+      <TimeZonePickerMap enabledTimeZones={zones} onTimeZoneSelect={onTimeZoneSelect} />,
+    );
+    const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+    const inAfrica = geoToViewBoxPoint(20, 5); // e.g. Central Africa
+    fireEvent.click(overlay, { clientX: inAfrica.x, clientY: inAfrica.y });
+    expect(onTimeZoneSelect).not.toHaveBeenCalled();
+  });
+
   it('never renders UTC labels (feature currently hidden)', () => {
     const { container } = render(<TimeZonePickerMap />);
     expect(container.querySelectorAll('svg text').length).toBe(0);
