@@ -284,9 +284,14 @@ describe('TimeZonePickerMap', () => {
     );
     const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
 
+    // clientY must land at a geographically plausible latitude near Los Angeles's
+    // real coordinate — nearestTimeZone is now capped by real-world distance (see
+    // MAX_ZONE_HOVER_DISTANCE_KM in TimeZoneLines.tsx), so an unset/default clientY
+    // (inverting to ~87°N, near the North Pole) would no longer resolve to it.
+    const nearLA = geoToViewBoxPoint(-120, 34); // same line (lon -120 = offsetMinutesToX(-480))
     fireEvent(
       overlay,
-      new MouseEvent('pointermove', { clientX: offsetMinutesToX(-480), bubbles: true }),
+      new MouseEvent('pointermove', { clientX: nearLA.x, clientY: nearLA.y, bubbles: true }),
     );
     expect(onTimeZoneHover).toHaveBeenLastCalledWith(
       expect.objectContaining({ offsetMinutes: -480, nearestTimeZone: 'America/Los_Angeles' }),
@@ -304,11 +309,123 @@ describe('TimeZonePickerMap', () => {
     expect(onTimeZoneHover).toHaveBeenLastCalledWith(null);
   });
 
+  it('reports no nearestTimeZone when hovering far from every zone in a busy bucket', () => {
+    // UTC+5:30's bucket has only two zones: Asia/Kolkata (lat 22.5°) and Asia/Colombo
+    // (lat 6.9°). Hovering along the fixed offset line only varies latitude, and
+    // Colombo is mathematically "closer than Kolkata" for any point south of ~14.7°N —
+    // all the way to Antarctica — so without a plausibility cap, it would keep being
+    // reported however far away the cursor actually is. The line/offset itself should
+    // still resolve; only the specific city guess should go quiet.
+    const onTimeZoneHover = vi.fn();
+    const { container } = render(<TimeZonePickerMap onTimeZoneHover={onTimeZoneHover} />);
+    const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+    const farSouthOnKolkataLine = geoToViewBoxPoint(82.5, -40); // well past the 3000km cap
+    fireEvent(
+      overlay,
+      new MouseEvent('pointermove', {
+        clientX: farSouthOnKolkataLine.x,
+        clientY: farSouthOnKolkataLine.y,
+        bubbles: true,
+      }),
+    );
+
+    expect(onTimeZoneHover).toHaveBeenLastCalledWith(
+      expect.objectContaining({ offsetMinutes: 330, nearestTimeZone: null }),
+    );
+  });
+
   it('applies custom continentColor and backgroundColor', () => {
     const { container } = render(
       <TimeZonePickerMap continentColor="rebeccapurple" backgroundColor="cornsilk" />,
     );
     expect(container.querySelector('g[fill="rebeccapurple"]')).not.toBeNull();
     expect(container.querySelector('rect[fill="cornsilk"]')).not.toBeNull();
+  });
+
+  describe('country highlight', () => {
+    // Madrid's own reference coordinate — real, unambiguous position inside Spain.
+    const madrid = geoToViewBoxPoint(-3.68, 40.4);
+
+    it('reports and highlights the country on hover when its own zone matches the resolved bucket', () => {
+      // Restricted to Spain's own zone alone: with only one offset visible, resolution
+      // falls back to real geographic proximity (not the tight offset-line pixel cap),
+      // so hovering Madrid's exact position correctly resolves to Europe/Madrid — see
+      // TimeZoneLines.tsx's single-visible-offset handling.
+      const onCountryHover = vi.fn();
+      const { container } = render(
+        <TimeZonePickerMap enabledTimeZones={['Europe/Madrid']} onCountryHover={onCountryHover} />,
+      );
+      const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+      fireEvent(
+        overlay,
+        new MouseEvent('pointermove', { clientX: madrid.x, clientY: madrid.y, bubbles: true }),
+      );
+
+      expect(onCountryHover).toHaveBeenLastCalledWith({ id: '724', name: 'Spain' });
+      expect(container.querySelector('[data-testid="country-highlight"]')).not.toBeNull();
+
+      fireEvent.pointerLeave(overlay);
+      expect(onCountryHover).toHaveBeenLastCalledWith(null);
+      expect(container.querySelector('[data-testid="country-highlight"]')).toBeNull();
+    });
+
+    it('does not report/highlight a country whose own zone is absent from the resolved bucket', () => {
+      // Deliberately restricted so Madrid's real position resolves to the UTC+0 bucket
+      // (Europe/London only) rather than Spain's own UTC+1 zone — the exact "Spain
+      // sits geographically closer to UTC+0" scenario the membership check exists for.
+      // (Not using the full default zone set here: Spain also has Atlantic/Canary,
+      // which genuinely IS UTC+0, so that would coincidentally "match" and mask the
+      // behavior this test is meant to prove.)
+      const onCountryHover = vi.fn();
+      const { container } = render(
+        <TimeZonePickerMap
+          enabledTimeZones={['Europe/London', 'Europe/Madrid']}
+          onCountryHover={onCountryHover}
+        />,
+      );
+      const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+      fireEvent(
+        overlay,
+        new MouseEvent('pointermove', { clientX: madrid.x, clientY: madrid.y, bubbles: true }),
+      );
+
+      expect(onCountryHover).toHaveBeenLastCalledWith(null);
+      expect(container.querySelector('[data-testid="country-highlight"]')).toBeNull();
+    });
+
+    it('reports the country on click without a preceding pointermove (tap parity)', () => {
+      const onCountryHover = vi.fn();
+      const { container } = render(
+        <TimeZonePickerMap enabledTimeZones={['Europe/Madrid']} onCountryHover={onCountryHover} />,
+      );
+      const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+      fireEvent.click(overlay, { clientX: madrid.x, clientY: madrid.y });
+
+      expect(onCountryHover).toHaveBeenCalledWith({ id: '724', name: 'Spain' });
+    });
+
+    it('applies custom countryHighlightFillColor and countryHighlightBorderColor', () => {
+      const { container } = render(
+        <TimeZonePickerMap
+          enabledTimeZones={['Europe/Madrid']}
+          countryHighlightFillColor="rebeccapurple"
+          countryHighlightBorderColor="cornsilk"
+        />,
+      );
+      const overlay = container.querySelector('[data-testid="tz-lines-overlay"]')!;
+
+      fireEvent(
+        overlay,
+        new MouseEvent('pointermove', { clientX: madrid.x, clientY: madrid.y, bubbles: true }),
+      );
+
+      const highlight = container.querySelector('[data-testid="country-highlight"]')!;
+      expect(highlight.getAttribute('fill')).toBe('rebeccapurple');
+      expect(highlight.getAttribute('stroke')).toBe('cornsilk');
+    });
   });
 });
