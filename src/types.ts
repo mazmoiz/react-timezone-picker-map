@@ -19,6 +19,14 @@ export interface TimeZoneSelection {
   readonly nearestTimeZone: IanaTimeZoneName | null;
 }
 
+/** The payload passed to `onCountryHover` for the country under the cursor/tap. */
+export interface CountryInfo {
+  /** ISO 3166-1 numeric country code (as a string), e.g. '724' for Spain. */
+  readonly id: string;
+  /** Country name (Natural Earth), e.g. 'Spain'. */
+  readonly name: string;
+}
+
 export interface TimeZonePickerMapProps {
   /** Width of the map. Default `'100%'`. */
   width?: string | number;
@@ -37,10 +45,23 @@ export interface TimeZonePickerMapProps {
   timeZoneLineColor?: string;
   /** Color of a UTC-offset line while hovered or keyboard-focused. */
   timeZoneLineHighlightColor?: string;
+  /** Fill color for the highlighted country under the cursor/tap. */
+  countryHighlightFillColor?: string;
+  /** Border color for the highlighted country under the cursor/tap. */
+  countryHighlightBorderColor?: string;
 
   /** Subset of IANA zones the consumer wants selectable. Default: all zones. */
   enabledTimeZones?: readonly IanaTimeZoneName[];
 
   onTimeZoneSelect?: (selection: TimeZoneSelection) => void;
   onTimeZoneHover?: (selection: TimeZoneSelection | null) => void;
+  /**
+   * Fired on hover/focus and tap for whichever country is under the cursor — but only
+   * when that country's own IANA zone(s) are consistent with the currently-resolved
+   * offset (see the country-zone membership check in src/utils/countryHitTest.ts).
+   * This can legitimately stay `null` for a country whose real timezone differs from
+   * what its geographic position alone would suggest (e.g. Spain sits closer to the
+   * UTC+0 band than its actual UTC+1) — see the README's "Good to know" section.
+   */
+  onCountryHover?: (country: CountryInfo | null) => void;
 }

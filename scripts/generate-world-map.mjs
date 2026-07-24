@@ -10,8 +10,9 @@
 // real lon/lat data with an actual `d3.geoEquirectangular()` projection, so alignment
 // is guaranteed by construction instead of approximated.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { geoEquirectangular, geoPath } from 'd3-geo';
+import { geoEquirectangular, geoPath, geoStream } from 'd3-geo';
 import { feature } from 'topojson-client';
+import worldCountries from 'world-countries';
 
 const MAP_WIDTH = 1600;
 const MAP_HEIGHT = 800;
@@ -178,16 +179,22 @@ const zones = Array.from(
   .sort();
 
 const canonicalCoordinates = {};
+// zone1970.tab's first column: comma-separated ISO 3166-1 alpha-2 country codes that
+// use that row's canonical zone (e.g. many small West/Central African countries share
+// Africa/Lagos's rules). Used below (with COUNTRY_TIME_ZONES) to check whether a
+// hovered country's own zone(s) match the currently-resolved offset bucket.
+const zoneCountryCodes = {};
 let skippedLines = 0;
 for (const line of zone1970Text.split('\n')) {
   if (!line || line.startsWith('#')) continue;
-  const [, coord, rawZoneName] = line.split('\t');
+  const [countryCodes, coord, rawZoneName] = line.split('\t');
   if (!coord || !rawZoneName) {
     skippedLines++;
     continue;
   }
   const zoneName = LEGACY_TO_MODERN[rawZoneName] ?? rawZoneName;
   canonicalCoordinates[zoneName] = parseCoordinate(coord);
+  if (countryCodes) zoneCountryCodes[zoneName] = countryCodes.split(',');
 }
 
 // Resolve a zone to a coordinate: direct zone1970.tab entry, or (transitively, in case
@@ -243,3 +250,157 @@ writeFileSync(
       .join('\n')}\n];\n`,
 );
 console.log(`Wrote src/data/zoneCoordinates.ts`);
+
+// Country boundaries + country-zone membership, used for the "highlight the country
+// under the cursor" feature (src/utils/countryHitTest.ts). Projected with the SAME
+// `projection` instance used for Continents.tsx above — this is what keeps country
+// borders pixel-aligned with the landmass and offset lines. Coordinates are in "core"
+// pre-LEFT_GUTTER_WIDTH space, matching Continents.tsx's own path and geometry.ts's
+// invertPoint()'s `coreX` convention.
+const countriesTopology = JSON.parse(
+  readFileSync(new URL('../node_modules/world-atlas/countries-110m.json', import.meta.url)),
+);
+const countriesFeatureCollection = feature(countriesTopology, countriesTopology.objects.countries);
+
+// Projects a raw lon/lat GeoJSON Polygon/MultiPolygon geometry into core-space
+// polygons, correctly split at the antimeridian (±180° longitude) — e.g. Russia and
+// Fiji's territory crosses it. A naive per-point `projection([lon, lat])` map (no
+// clipping) would instead draw one long, wrong straight edge connecting the far right
+// of the map to the far left for any such ring. `projection.stream()` wraps our sink
+// with the projection's own preclip/clip pipeline (the same mechanism `d3.geoPath`
+// itself uses to render antimeridian-crossing shapes correctly) — feeding the raw
+// geometry through it via `geoStream` gives already-projected, already-split rings.
+function extractProjectedPolygons(geometry) {
+  const polygons = [];
+  let currentPolygon = null;
+  let currentRing = null;
+  const sink = {
+    point(x, y) {
+      currentRing.push([Math.round(x), Math.round(y)]);
+    },
+    lineStart() {
+      currentRing = [];
+    },
+    lineEnd() {
+      currentPolygon.push(currentRing);
+      currentRing = null;
+    },
+    polygonStart() {
+      currentPolygon = [];
+    },
+    polygonEnd() {
+      polygons.push(currentPolygon);
+      currentPolygon = null;
+    },
+    sphere() {},
+  };
+  geoStream(geometry, projection.stream(sink));
+  return polygons;
+}
+
+// world-atlas only gives each country a numeric ISO 3166-1 id + Natural Earth name —
+// no alpha-2 code, which is what zone1970.tab's country-code column uses. `world-countries`
+// (devDependency, build-time only — never shipped at runtime) provides a reliable
+// numeric (ccn3) <-> alpha-2 (cca2) crosswalk instead of hand-maintaining one.
+const numericToAlpha2 = {};
+for (const country of worldCountries) {
+  if (country.ccn3 && country.cca2) numericToAlpha2[country.ccn3] = country.cca2;
+}
+
+// Invert zoneCountryCodes (canonical zone -> alpha-2 codes) to alpha-2 -> zone names.
+const alpha2ToZones = {};
+for (const [zoneName, codes] of Object.entries(zoneCountryCodes)) {
+  for (const code of codes) {
+    (alpha2ToZones[code] ??= []).push(zoneName);
+  }
+}
+
+const countryBoundaries = [];
+const countryTimeZones = {};
+let skippedCountryFeatures = 0;
+for (const f of countriesFeatureCollection.features) {
+  // A handful of disputed/unrecognized territories (e.g. Kosovo, Somaliland, N.
+  // Cyprus) have no `id` in world-atlas's data at all — no ISO code means no way to
+  // resolve their zone membership, so they're excluded rather than included with
+  // broken data (they'd never pass the membership check anyway).
+  //
+  // Antarctica ('010') is excluded deliberately, not for a data reason — it actually
+  // DOES have real, functioning IANA zone membership (dedicated Antarctica/* research
+  // station zones, plus a couple of pure aliases to supply-nation zones like
+  // Pacific/Auckland/Asia/Riyadh — some stations just use their supply country's
+  // official time). So it would highlight/report like any other country. It's
+  // excluded because Antarctica has no permanent civilian population and isn't a
+  // meaningful "pick your country" target for the vast majority of consumers of this
+  // picker — Antarctica/* zones remain fully selectable via the map's offset lines as
+  // normal; only this country-highlight feature ignores it.
+  if (!f.id || !f.geometry || f.id === '010') {
+    skippedCountryFeatures++;
+    continue;
+  }
+  const polygons = extractProjectedPolygons(f.geometry);
+  const allPoints = polygons.flat(2);
+  const xs = allPoints.map((p) => p[0]);
+  const ys = allPoints.map((p) => p[1]);
+  countryBoundaries.push({
+    id: String(f.id),
+    name: f.properties.name,
+    bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+    polygons,
+  });
+
+  const alpha2 = numericToAlpha2[String(f.id)];
+  const zonesForCountry = alpha2 ? alpha2ToZones[alpha2] : undefined;
+  if (zonesForCountry) countryTimeZones[String(f.id)] = zonesForCountry;
+}
+
+if (countryBoundaries.length < 150) {
+  throw new Error(
+    `Expected ~177 countries (minus a few unrecognized territories), got ` +
+      `${countryBoundaries.length} — world-atlas's countries-110m.json shape changed?`,
+  );
+}
+console.log(
+  `Resolved ${countryBoundaries.length} country boundaries (${skippedCountryFeatures} ` +
+    `skipped for missing id/geometry), ${Object.keys(countryTimeZones).length} with ` +
+    `known IANA zone membership.`,
+);
+
+const countriesFile = new URL('../src/data/countries.ts', import.meta.url);
+writeFileSync(
+  countriesFile,
+  `// AUTO-GENERATED by scripts/generate-world-map.mjs — do not hand-edit.\n` +
+    `// Regenerate with \`npm run generate:worldmap\` and review the diff.\n` +
+    `// Source: Natural Earth 110m admin-0 countries, via the \`world-atlas\` npm package\n` +
+    `// (world-atlas/countries-110m.json), projected with the SAME\n` +
+    `// d3.geoEquirectangular().fitSize(...) instance used for Continents.tsx above — this\n` +
+    `// is what keeps country borders pixel-aligned with the landmass and offset lines.\n` +
+    `// Coordinates are in "core" 1600x800 space (pre-LEFT_GUTTER_WIDTH), matching the\n` +
+    `// space geometry.ts's invertPoint()'s \`coreX\` operates in.\n\n` +
+    `export interface CountryBoundary {\n` +
+    `  readonly id: string;\n` +
+    `  readonly name: string;\n` +
+    `  readonly bbox: readonly [number, number, number, number];\n` +
+    `  readonly polygons: readonly (readonly (readonly [number, number])[])[][];\n` +
+    `}\n\n` +
+    `export const COUNTRY_BOUNDARIES: readonly CountryBoundary[] = [\n${countryBoundaries
+      .map(
+        (c) =>
+          `  { id: '${c.id}', name: ${JSON.stringify(c.name)}, bbox: ${JSON.stringify(c.bbox)}, polygons: ${JSON.stringify(c.polygons)} },`,
+      )
+      .join('\n')}\n];\n\n` +
+    `// Each country's real IANA zone(s) (by ISO 3166-1 numeric id, matching\n` +
+    `// CountryBoundary.id above), derived from zone1970.tab's country-code column via a\n` +
+    `// numeric<->alpha-2 crosswalk. Used by src/utils/countryHitTest.ts to only report a\n` +
+    `// hovered country when it's consistent with the currently-resolved offset bucket —\n` +
+    `// see the "Country-zone membership check" note in the project's implementation plan\n` +
+    `// for why (e.g. Spain sits geographically closer to UTC+0 than its actual UTC+1, so\n` +
+    `// this check keeps the highlight from ever contradicting the resolved offset).\n` +
+    `// A country absent from this map (or absent entirely) has no known IANA zone and\n` +
+    `// will never pass the membership check.\n\n` +
+    `export const COUNTRY_TIME_ZONES: Record<string, readonly string[]> = {\n${Object.entries(
+      countryTimeZones,
+    )
+      .map(([id, zoneNames]) => `  '${id}': ${JSON.stringify(zoneNames)},`)
+      .join('\n')}\n};\n`,
+);
+console.log(`Wrote src/data/countries.ts`);

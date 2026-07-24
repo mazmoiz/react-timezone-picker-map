@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 import { IANA_TIME_ZONES, TimeZonePickerMap } from '@lib';
-import type { IanaTimeZoneName, TimeZoneSelection } from '@lib';
+import type { CountryInfo, IanaTimeZoneName, TimeZoneSelection } from '@lib';
 import { Tooltip } from './Tooltip';
 
 const RESTRICTED_ZONES = [
@@ -21,11 +21,14 @@ export function App() {
   const [backgroundColor, setBackgroundColor] = useState('#f8f9fa');
   const [timeZoneLineColor, setTimeZoneLineColor] = useState('#bababa');
   const [timeZoneLineHighlightColor, setTimeZoneLineHighlightColor] = useState('#7599a9');
+  const [countryHighlightFillColor, setCountryHighlightFillColor] = useState('#7599a9');
+  const [countryHighlightBorderColor, setCountryHighlightBorderColor] = useState('#ffffff');
   const [selectedZones, setSelectedZones] = useState<IanaTimeZoneName[]>([]);
   const [presetLabel, setPresetLabel] = useState('All');
   const [zoneFilter, setZoneFilter] = useState('');
   const [selected, setSelected] = useState<TimeZoneSelection | null>(null);
   const [hovered, setHovered] = useState<TimeZoneSelection | null>(null);
+  const [hoveredCountry, setHoveredCountry] = useState<CountryInfo | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
   const handleMapAreaMouseMove = (event: MouseEvent<HTMLDivElement>) => {
@@ -139,6 +142,16 @@ export function App() {
                   label="Offset line highlight"
                   value={timeZoneLineHighlightColor}
                   onChange={setTimeZoneLineHighlightColor}
+                />
+                <ColorField
+                  label="Country highlight fill"
+                  value={countryHighlightFillColor}
+                  onChange={setCountryHighlightFillColor}
+                />
+                <ColorField
+                  label="Country highlight border"
+                  value={countryHighlightBorderColor}
+                  onChange={setCountryHighlightBorderColor}
                 />
               </div>
             </ControlGroup>
@@ -260,10 +273,13 @@ export function App() {
                 backgroundColor={backgroundColor}
                 timeZoneLineColor={timeZoneLineColor}
                 timeZoneLineHighlightColor={timeZoneLineHighlightColor}
+                countryHighlightFillColor={countryHighlightFillColor}
+                countryHighlightBorderColor={countryHighlightBorderColor}
                 enabledTimeZones={enabledTimeZones}
                 height="auto"
                 onTimeZoneSelect={setSelected}
                 onTimeZoneHover={setHovered}
+                onCountryHover={setHoveredCountry}
               />
 
             </div>
@@ -274,7 +290,10 @@ export function App() {
 
         {/* Right panel — hovered/selected values */}
         <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <JsonPanel title="Hovered" value={hovered} />
+          <JsonPanel
+            title="Hovered"
+            value={hovered ? { ...hovered, country: hoveredCountry } : null}
+          />
           <JsonPanel title="Selected" value={selected} />
         </div>
       </div>
@@ -453,7 +472,7 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
           // Fixed height (not min-height) — this updates on every pointermove while
           // hovering the map, so a size that tracked content would constantly resize
           // the panel and cause layout jank.
-          height: 220,
+          height: 300,
           margin: 0,
           padding: 12,
           background: '#f8f9fa',

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 import type { TimeZoneSelection } from '../../types';
 import {
+  LEFT_GUTTER_WIDTH,
   MAP_HEIGHT,
   MAX_LINE_SNAP_DISTANCE,
   TOTAL_WIDTH,
@@ -11,16 +12,25 @@ import {
   resolveNearestOffset,
 } from '../../utils/geometry';
 import { ZONE_COORDINATES } from '../../data/zoneCoordinates';
+import type { CountryBoundary } from '../../data/countries';
 import { findNearestZone, haversineDistanceKm } from '../../utils/nearestZone';
+import { countryMatchesTimeZones, findCountryAtPoint } from '../../utils/countryHitTest';
 
 /**
- * When only one offset line is visible (a restricted `enabledTimeZones` collapsing to
- * a single bucket), MAX_LINE_SNAP_DISTANCE can't be used to gate acceptance — see below.
- * Instead we require the pointer's real geographic position to be within this distance
- * of the resolved zone's own reference coordinate, so hovering a completely unrelated
- * continent doesn't stay "stuck" on the only visible zone. Sized generously above the
- * largest realistic single-zone country span (e.g. Argentina, Western Australia) while
- * still excluding other continents.
+ * General plausibility cap on `nearestTimeZone`: it's only reported if the winning
+ * candidate's real reference coordinate is within this distance of the actual
+ * hover/click position — otherwise `nearestTimeZone` is `null`, even though the bucket
+ * (offset/label/timeZones) may still resolve normally. Without this, a busy bucket
+ * whose zones are geographically far apart along the same fixed-longitude line (e.g.
+ * UTC+5:30's Asia/Kolkata vs Asia/Colombo) would keep reporting whichever one is
+ * merely *less far*, however implausible — e.g. "Colombo" while hovering near
+ * Antarctica, since it's still closer than Kolkata even there. Sized generously above
+ * the largest realistic single-zone country span (e.g. Argentina, Western Australia).
+ *
+ * Also used, as a special case, to gate whole-bucket acceptance when only one offset
+ * line is visible (a restricted `enabledTimeZones` collapsing to a single bucket) —
+ * MAX_LINE_SNAP_DISTANCE can't do that job there since a real zone's landmass commonly
+ * sits far from its own line (see below).
  */
 const MAX_ZONE_HOVER_DISTANCE_KM = 3000;
 
@@ -30,6 +40,12 @@ export interface TimeZoneLinesProps {
   buckets: readonly TimeZoneSelection[];
   onSelect?: (selection: TimeZoneSelection) => void;
   onHover?: (selection: TimeZoneSelection | null) => void;
+  /**
+   * Internal-only: carries the full geometry-bearing CountryBoundary (unlike the
+   * public onCountryHover, which only gets the small {id, name} shape) so
+   * TimeZonePickerMap can render CountryHighlight without re-deriving it.
+   */
+  onCountryChange?: (country: CountryBoundary | null) => void;
 }
 
 const FOCUS_TARGET_WIDTH = 8;
@@ -52,6 +68,7 @@ export function TimeZoneLines({
   buckets,
   onSelect,
   onHover,
+  onCountryChange,
 }: TimeZoneLinesProps) {
   // Tracked locally (not lifted, matching how selection/hover state already works in this
   // tree) purely to drive the visual highlight — `onHover` still carries the same payload
@@ -72,18 +89,30 @@ export function TimeZoneLines({
   // pointer event has a real position, refines it with the geographically nearest
   // zone within that bucket (see src/utils/nearestZone.ts) — the precise-selection
   // piece keyboard activation can't provide (no cursor position to measure from).
-  const resolveBucketFromClientPoint = useCallback(
+  // Also resolves whichever country (if any) is under the same point and is
+  // consistent with the resolved bucket (see src/utils/countryHitTest.ts) — computed
+  // here, from the same point conversion, rather than as a separate pass.
+  const resolveFromClientPoint = useCallback(
     (
       clientX: number,
       clientY: number,
       rect: { left: number; top: number; width: number; height: number },
-    ) => {
+    ): { bucket: TimeZoneSelection | null; country: CountryBoundary | null } => {
       const { x, y } = clientPointToViewBoxPoint(clientX, clientY, rect);
       const nearestOffset = resolveNearestOffset(x, visibleOffsets);
-      const bucket = bucketsByOffset.get(nearestOffset);
-      if (!bucket) return null;
+      const rawBucket = bucketsByOffset.get(nearestOffset);
+      if (!rawBucket) return { bucket: null, country: null };
       const point = invertPoint(x, y);
-      const nearestTimeZone = findNearestZone(bucket.timeZones, point);
+      const rawNearestZone = findNearestZone(rawBucket.timeZones, point);
+      // The winning candidate can still be implausibly far (e.g. the only two zones
+      // in a bucket sit on opposite sides of the globe along the same offset line) —
+      // cap it unconditionally, before any bucket/line acceptance logic below, so a
+      // specific "nearest city" guess never outlives its own plausibility.
+      const nearestTimeZone =
+        rawNearestZone != null &&
+        haversineDistanceKm(point, ZONE_COORDINATES[rawNearestZone]) <= MAX_ZONE_HOVER_DISTANCE_KM
+          ? rawNearestZone
+          : null;
 
       // A sparse, widely-spaced set of visible lines (e.g. a restricted
       // enabledTimeZones) would otherwise make every point on the map resolve to
@@ -92,52 +121,61 @@ export function TimeZoneLines({
       const nearLine = Math.abs(offsetMinutesToX(nearestOffset) - x) <= MAX_LINE_SNAP_DISTANCE;
 
       if (!nearLine) {
-        if (visibleOffsets.length > 1) return null;
+        if (visibleOffsets.length > 1) return { bucket: null, country: null };
         // With only one line visible there's no other candidate offset to
         // disambiguate from, so also accept real geographic proximity to the
         // resolved zone — a real zone's landmass (e.g. Argentina under UTC-3)
         // commonly sits much further from its own line than the cap above allows.
-        const nearZone =
-          nearestTimeZone != null &&
-          haversineDistanceKm(point, ZONE_COORDINATES[nearestTimeZone]) <=
-            MAX_ZONE_HOVER_DISTANCE_KM;
-        if (!nearZone) return null;
+        // nearestTimeZone was already capped by that same distance test above, so
+        // "is there a plausible candidate" collapses to just: is there one at all.
+        if (nearestTimeZone == null) return { bucket: null, country: null };
       }
 
-      return { ...bucket, nearestTimeZone };
+      const bucket = { ...rawBucket, nearestTimeZone };
+
+      const hitCountry = findCountryAtPoint(x - LEFT_GUTTER_WIDTH, y);
+      const country =
+        hitCountry && countryMatchesTimeZones(hitCountry, bucket.timeZones) ? hitCountry : null;
+
+      return { bucket, country };
     },
     [bucketsByOffset, visibleOffsets],
   );
 
   const handleOverlayClick = useCallback(
     (event: MouseEvent<SVGRectElement>) => {
-      const bucket = resolveBucketFromClientPoint(
+      const { bucket, country } = resolveFromClientPoint(
         event.clientX,
         event.clientY,
         event.currentTarget.getBoundingClientRect(),
       );
       if (bucket) onSelect?.(bucket);
+      // Fired on click too (not just pointermove) so touch taps — which often don't
+      // fire a preceding pointermove — still get country-highlight parity.
+      onCountryChange?.(country);
     },
-    [onSelect, resolveBucketFromClientPoint],
+    [onSelect, onCountryChange, resolveFromClientPoint],
   );
 
   const handleOverlayPointerMove = useCallback(
     (event: PointerEvent<SVGRectElement>) => {
-      const bucket = resolveBucketFromClientPoint(
+      const { bucket, country } = resolveFromClientPoint(
         event.clientX,
         event.clientY,
         event.currentTarget.getBoundingClientRect(),
       );
       setHoveredOffset(bucket?.offsetMinutes ?? null);
       onHover?.(bucket);
+      onCountryChange?.(country);
     },
-    [onHover, resolveBucketFromClientPoint],
+    [onHover, onCountryChange, resolveFromClientPoint],
   );
 
   const handleOverlayPointerLeave = useCallback(() => {
     setHoveredOffset(null);
     onHover?.(null);
-  }, [onHover]);
+    onCountryChange?.(null);
+  }, [onHover, onCountryChange]);
 
   const handleLineKeyDown = useCallback(
     (event: KeyboardEvent<SVGGElement>, bucket: TimeZoneSelection) => {
