@@ -1,6 +1,6 @@
 {
   "name": "@mazmoiz/react-timezone-picker-map",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An interactive React world map for picking a UTC offset and its matching IANA time zones.",
   "type": "module",
   "license": "MIT",
